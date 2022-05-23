@@ -6,13 +6,14 @@
 #include <time.h>
 
 int** cig_butts;
-sem_t** cig_butts_inter;
-sem_t** sneakers_inter;
+
 sem_t lock;
-sem_t prior;
 sem_t sem_break;
+sem_t** gatherers_prior;
+sem_t** sneakers_prior;
 
 int sneaker_cord[8][2] = {{-1,-1},{-1,0},{-1,1},{0,1},{1,1},{1,0},{1,-1},{0,-1}};
+int* gatherers_job;
 enum hw2_actions action;
 
 struct Private_struct
@@ -23,6 +24,15 @@ struct Private_struct
     int sj;
     int ng;
     int** top_corners;
+    int queue;
+};
+
+struct Intersection_struct
+{
+    int num_gatherer;
+    int num_sneaker;
+    struct Private_struct* gatherer_info;
+    struct Sneaker_struct* sneaker_info;
 };
 
 struct Sneaker_struct
@@ -43,6 +53,40 @@ struct Commander
     struct Private_struct* privates;
 };
 
+
+int job_done(int* gatherer_job, struct Intersection_struct* info)
+{
+    int is_Okay = 1;
+    for(int i = 0; i < info->num_gatherer; i++)
+    {
+        if(gatherer_job[i] != info->gatherer_info[i].ng)
+        {
+            is_Okay = 0;
+        }
+    }
+    return is_Okay;
+}
+int check_intersection(struct Private_struct gather_i, struct Private_struct gather_j, int i_q, int j_q)
+{
+    for(int i = 0; i < gather_i.si; i++)
+    {
+        for(int j = 0; j < gather_i.sj; j++)
+        {
+            for(int k = 0; k < gather_j.si; k++)
+            {
+                for(int l = 0; l < gather_j.sj; l++)
+                {
+                    if(gather_i.top_corners[i_q][0] + i ==  gather_j.top_corners[j_q][0] + k && gather_i.top_corners[i_q][1] + j == gather_j.top_corners[j_q][1] + l)
+                    {
+                        return 1;
+                    }
+                }
+            }
+        }
+    }
+
+    return 0;
+}
 
 void *give_command( void* arguments)
 {
@@ -155,6 +199,7 @@ struct Commander simplify_orders(struct Commander command_list, int num_privates
     }
     return new_command_list;
 
+
 }
 void *collect_cigg_butts( void* arguments)
 {
@@ -162,18 +207,7 @@ void *collect_cigg_butts( void* arguments)
     hw2_notify(action = GATHERER_CREATED, (*private_prop).gid, 0, 0);
     for(int num = 0; num < (*private_prop).ng; num++)
     {
-        sem_wait(&prior);
-        for(int i = 0; i < (*private_prop).si; i++ )
-        {
-            for (int j = 0; j < (*private_prop).sj; j++)
-            {
-                int coord_i = (*private_prop).top_corners[num][0] + i;
-                int coord_j = (*private_prop).top_corners[num][1] + j;
-                sem_wait(&cig_butts_inter[coord_i][coord_j]);
-            }
-            
-        }
-        sem_post(&prior);
+        sem_wait(&gatherers_prior[(*private_prop).queue][gatherers_job[(*private_prop).queue]]);
         hw2_notify(action = GATHERER_ARRIVED, (*private_prop).gid, (*private_prop).top_corners[num][0],(*private_prop).top_corners[num][1]);
         for(int j = 0; j < (*private_prop).sj; j++)
         {
@@ -181,14 +215,14 @@ void *collect_cigg_butts( void* arguments)
             {
                 int coord_i = (*private_prop).top_corners[num][0] + i;
                 int coord_j = (*private_prop).top_corners[num][1] + j;
-                while(cig_butts[coord_i][coord_j] != 0)
+                while(cig_butts[coord_i][coord_j] > 0)
                 {
                     
-                    for(int t = 0; t < (*private_prop).time / 5; t++)
+                    for(int t = 0; t < (*private_prop).time / 10; t++)
                     {
                         sem_wait(&sem_break);
                         sem_post(&sem_break);
-                        usleep(5000);
+                        usleep(10000);
                     }
 
 
@@ -199,17 +233,7 @@ void *collect_cigg_butts( void* arguments)
                 }
             }
         }
-
-        for(int i = 0; i < (*private_prop).si; i++ )
-        {
-            for (int j = 0; j < (*private_prop).sj; j++)
-            {
-                int coord_i = (*private_prop).top_corners[num][0] + i;
-                int coord_j = (*private_prop).top_corners[num][1] + j;
-                sem_post(&cig_butts_inter[coord_i][coord_j]);
-            }
-            
-        }
+        gatherers_job[(*private_prop).queue]++;
         hw2_notify(action = GATHERER_CLEARED, (*private_prop).gid, 0, 0);
     }
     hw2_notify(action = GATHERER_EXITED, (*private_prop).gid, 0, 0);
@@ -221,19 +245,6 @@ void *litter_cigg_butts( void* arguments)
     hw2_notify(action = SNEAKY_SMOKER_CREATED, (*sneaker_prop).sid, 0, 0);
     for(int num = 0; num < (*sneaker_prop).ns; num++)
     {
-        sem_wait(&prior);
-        for(int i = 0; i < 3; i++ )
-        {
-            for (int j = 0; j < 3; j++)
-            {
-                int coord_i = (*sneaker_prop).litter_centers[num][0] - 1 + i;
-                int coord_j = (*sneaker_prop).litter_centers[num][1] - 1 + j;
-                sem_wait(&cig_butts_inter[coord_i][coord_j]);
-            }
-            
-        }
-        sem_wait(&sneakers_inter[(*sneaker_prop).litter_centers[num][0]][(*sneaker_prop).litter_centers[num][1]]);
-        sem_post(&prior);
         hw2_notify(action = SNEAKY_SMOKER_ARRIVED, (*sneaker_prop).sid, (*sneaker_prop).litter_centers[num][0],(*sneaker_prop).litter_centers[num][1]);
         for(int i = 0; i < (*sneaker_prop).cigg_num[num]; i++ )
         {
@@ -251,22 +262,54 @@ void *litter_cigg_butts( void* arguments)
             hw2_notify(action = SNEAKY_SMOKER_FLICKED, (*sneaker_prop).sid, coord_i,coord_j);
             sem_post(&lock);
         }
-        
-        for(int i = 0; i < 3; i++ )
-        {
-            for (int j = 0; j < 3; j++)
-            {
-                int coord_i = (*sneaker_prop).litter_centers[num][0] - 1 + i;
-                int coord_j = (*sneaker_prop).litter_centers[num][1] - 1 + j;
-                sem_post(&cig_butts_inter[coord_i][coord_j]);
-            }
-            
-        }
-        sem_post(&sneakers_inter[(*sneaker_prop).litter_centers[num][0]][(*sneaker_prop).litter_centers[num][1]]);
+    
 
     }
 }
 
+void *intersection_check(void* arguments)
+{
+    struct Intersection_struct *info = arguments;
+    struct Private_struct* gathers = info->gatherer_info;
+    int num_gathers = info->num_gatherer;
+    struct Sneaker_struct* sneakers = info->sneaker_info;
+    int* running_gatherer = (int*)malloc(sizeof(int)*num_gathers);
+    while (!job_done(gatherers_job, info))
+    {
+        for(int i = 0; i < num_gathers; i++)
+        {
+            if(gatherers_job[i] == gathers[i].ng)
+            {
+                running_gatherer[i] = 0;
+                continue;
+            }
+            int is_Okay = 1;
+            for(int j = 0; j < i; j++)
+            {
+                if(gatherers_job[j] == gathers[j].ng || running_gatherer[j] == 0)
+                {
+                    continue;
+                }
+
+                int intersection = check_intersection(gathers[i], gathers[j], gatherers_job[i], gatherers_job[j]);
+                if(intersection)
+                {
+                    is_Okay = 0;
+                }
+            }
+            if(is_Okay)
+            {
+                sem_post(&gatherers_prior[i][gatherers_job[i]]);
+                running_gatherer[i] = 1;
+            }
+            else
+            {
+                running_gatherer[i] = 0;
+            }
+        }
+        
+    }
+}
 
 int main()
 {
@@ -275,42 +318,44 @@ int main()
     int num_orders;
     int num_sneakers;
     char cmd[256]; 
-    scanf("%d %d", &gridx, &gridy);
+    scanf("%d%d", &gridx, &gridy);
     cig_butts = (int**)malloc(gridx * sizeof(int*));
-    cig_butts_inter = (sem_t**)malloc(gridx * sizeof(sem_t*));
-    sneakers_inter = (sem_t**)malloc(gridx * sizeof(sem_t*));
     for(int i = 0; i < gridx; i++)
     {
         cig_butts[i] = (int*)malloc(gridy * sizeof(int));
-        cig_butts_inter[i] = (sem_t*)malloc(gridy * sizeof(sem_t));
-        sneakers_inter[i] = (sem_t*)malloc(gridy * sizeof(sem_t));
         for(int j = 0; j < gridy; j++)
         {
             scanf("%d", &cig_butts[i][j]);
-            sem_init(&cig_butts_inter[i][j], 0, 1);
         }
     }
     sem_init(&lock, 0, 1);
-    sem_init(&prior, 0, 1);
     sem_init(&sem_break, 0, 1);
     scanf("%d", &num_privates);
     struct Private_struct* privates;
     struct Commander commander_orders;
     struct Sneaker_struct* sneakers;
+    struct Intersection_struct info;
     commander_orders.num_privates = num_privates;
     pthread_t private_thread[num_privates];
     pthread_t commander_thread;
+    pthread_t intersection_thread;
     privates = (struct Private_struct*)malloc(sizeof(struct Private_struct)* num_privates);
+    gatherers_prior = (sem_t**)malloc(sizeof(sem_t*) * num_privates);
     for(int i = 0; i < num_privates; i++)
     {
-        scanf("%d %d %d %d %d", &privates[i].gid, &privates[i].si, &privates[i].sj, &privates[i].time, &privates[i].ng);
+        scanf("%d%d%d%d%d", &privates[i].gid, &privates[i].si, &privates[i].sj, &privates[i].time, &privates[i].ng);
+        gatherers_prior[i] = (sem_t*)calloc(privates[i].ng, sizeof(sem_t));
+        privates[i].queue = i;
         privates[i].top_corners = (int**)malloc(privates[i].ng * sizeof(int*));
         for(int j= 0; j < privates[i].ng; j++)
         {
             privates[i].top_corners[j] = (int*)malloc(2 * sizeof(int));
-            scanf("%d %d", &privates[i].top_corners[j][0], &privates[i].top_corners[j][1]);
+            scanf("%d%d", &privates[i].top_corners[j][0], &privates[i].top_corners[j][1]);
+            sem_init(&gatherers_prior[i][j], 0, 0);
         }
     }
+    info.num_gatherer = num_privates;
+    gatherers_job = (int*)malloc(sizeof(int)* num_privates);
     commander_orders.privates = privates;
     scanf("%d", &num_orders);
     commander_orders.command = (int*)malloc(num_orders*sizeof(int));
@@ -337,18 +382,25 @@ int main()
     scanf("%d", &num_sneakers);
     pthread_t sneakers_thread[num_sneakers];
     sneakers = (struct Sneaker_struct*)malloc(sizeof(struct Sneaker_struct)* num_sneakers);
+    sneakers_prior = (sem_t**)malloc(sizeof(sem_t*) * num_sneakers);
     for(int i = 0; i < num_sneakers; i++)
     {
-        scanf("%d %d %d", &sneakers[i].sid, &sneakers[i].time, &sneakers[i].ns);
+        scanf("%d%d%d", &sneakers[i].sid, &sneakers[i].time, &sneakers[i].ns);
+        sneakers_prior[i] = (sem_t*)malloc(sizeof(sem_t) * sneakers[i].ns);
         sneakers[i].litter_centers = (int**)malloc(sneakers[i].ns * sizeof(int*));
         sneakers[i].cigg_num = (int*)malloc(sneakers[i].ns * sizeof(int));
         for(int j= 0; j < sneakers[i].ns; j++)
         {
             sneakers[i].litter_centers[j] = (int*)malloc(2 * sizeof(int));
-            scanf("%d %d %d", &sneakers[i].cigg_num[j], &sneakers[i].litter_centers[j][0], &sneakers[i].litter_centers[j][1]);
+            scanf("%d%d%d", &sneakers[i].cigg_num[j], &sneakers[i].litter_centers[j][0], &sneakers[i].litter_centers[j][1]);
+            sem_init(&sneakers_prior[i][j], 0, 0);
         }
     }
+    info.gatherer_info = privates;
+    info.sneaker_info = sneakers;
+    info.num_sneaker = num_sneakers;
     struct Commander simple_orders = simplify_orders(commander_orders, num_privates);
+    pthread_create( &intersection_thread, NULL, &intersection_check, (void*)&info);
     pthread_create( &commander_thread, NULL, &give_command, (void*)&simple_orders);
 
     hw2_init_notifier();
@@ -362,7 +414,7 @@ int main()
         pthread_create( &sneakers_thread[i], NULL, &litter_cigg_butts, (void*)&sneakers[i]);
     }
 
-
+    pthread_join(intersection_thread, NULL);
     pthread_join(commander_thread, NULL);
     for(int i = 0; i < num_privates; i++)
     {
